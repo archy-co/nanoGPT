@@ -1,7 +1,7 @@
 
 # nanoGPT
 
-## This repositories point
+## This repository's point
 
 This repository introduces 3 conceptual changes changes in an attempt to improve results of character-level prediction using enwik8 dataset. 
 
@@ -19,6 +19,8 @@ Improvements are quite small (if any).
 Configurations for corresponding models can be found in config/ directory with according name.
 
 Original README of nanoGPT (as of 2025/8) is below.
+
+---
 
 ![nanoGPT](assets/nanogpt.jpg)
 
