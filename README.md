@@ -1,6 +1,25 @@
 
 # nanoGPT
 
+## This repositories point
+
+This repository introduces 3 conceptual changes changes in an attempt to improve results of character-level prediction using enwik8 dataset. 
+
+The 3 extensions are:
+* Forgetting: partially moves some % of model weights back toward the initial state of the model every N iterations
+* bLR: bio-inspired learning rate, which is a complex cyclical LR with multi-periodic cycles. Warmup and decay is also possible in combination with bLR.
+* Attention strides: partition attention heads into groups with different attention strides, e.g. some heads attend to every token, some heads attend to every 2nd, some to every 4th etc.
+
+| | Baseline (babyPro) | With forgetting | With bLR | With forgetting + bLR | With attention strides |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| bpc | 1.287 | 1.279 | 1.287 | 1.277 | 1.290 |
+
+Improvements are quite small (if any).
+
+Configurations for corresponding models can be found in config/ directory with according name.
+
+Original README of nanoGPT (as of 2025/8) is below.
+
 ![nanoGPT](assets/nanogpt.jpg)
 
 The simplest, fastest repository for training/finetuning medium-sized GPTs. It is a rewrite of [minGPT](https://github.com/karpathy/minGPT) that prioritizes teeth over education. Still under active development, but currently the file `train.py` reproduces GPT-2 (124M) on OpenWebText, running on a single 8XA100 40GB node in about 4 days of training. The code itself is plain and readable: `train.py` is a ~300-line boilerplate training loop and `model.py` a ~300-line GPT model definition, which can optionally load the GPT-2 weights from OpenAI. That's it.
