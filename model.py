@@ -49,6 +49,8 @@ class CausalSelfAttention(nn.Module):
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
 
+        self.attention_strides = config.attention_strides
+
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -59,17 +61,41 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
+        if self.flash and all(s == 1 for s in self.attention_strides):
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
         else:
-            # manual implementation of attention
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+            # Manual per-head attention with striding and causal masking
+            y_heads = []
+            scale = 1.0 / math.sqrt(C // self.n_head)
+
+            for h in range(self.n_head):
+                stride = self.attention_strides[h]
+
+                q_h = q[:, h, :, :]             # (B, T, hs)
+                k_h = k[:, h, ::stride, :]      # (B, T', hs)
+                v_h = v[:, h, ::stride, :]      # (B, T', hs)
+
+                T_prime = k_h.size(1)
+
+                # Create causal mask: q_t can attend to k_s only if s * stride <= t
+                # Equivalent to: t >= s * stride → s <= t // stride
+                t_idxs = torch.arange(T, device=x.device).unsqueeze(1)  # (T, 1)
+                s_idxs = torch.arange(T_prime, device=x.device).unsqueeze(0)  # (1, T')
+                causal_mask = t_idxs >= (s_idxs * stride)  # (T, T')
+
+                # Compute attention
+                att = q_h @ k_h.transpose(-2, -1) * scale  # (B, T, T')
+                att = att.masked_fill(~causal_mask.unsqueeze(0), float('-inf'))  # (B, T, T')
+                att = F.softmax(att, dim=-1)
+                att = self.attn_dropout(att)
+
+                y_h = att @ v_h  # (B, T, hs)
+                y_heads.append(y_h)
+
+            y = torch.stack(y_heads, dim=1)  # (B, nh, T, hs)
+            y = y.transpose(1, 2).contiguous().view(B, T, C)
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
@@ -114,6 +140,13 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    attention_strides: list = None
+
+    def __post_init__(self):
+        if self.attention_strides is None:
+            self.attention_strides = [1] * self.n_head
+        assert len(self.attention_strides) == self.n_head, \
+            f"attention_strides must match n_head ({self.n_head} heads)"
 
 class GPT(nn.Module):
 

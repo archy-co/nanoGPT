@@ -28,6 +28,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
+import bGPT.lr as blr
 
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
@@ -72,11 +73,42 @@ backend = 'nccl' # 'nccl', 'gloo', etc.
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 compile = True # use PyTorch 2.0 to compile the model to be faster
+
+
+seed = 1488
+
+is_forgetting = False
+forget_interval = 200
+forget_strength = 0.15
+
+is_bLR = False
+max_lr = 1.5e-3
+circadian_amp = 0.3          # amplitude of fast fluctuations
+circadian_period = 1000      # in iterations
+long_cycle_amp = 0.2         # amplitude of slower cycles
+long_cycle_period = 5000     # in iterations
+noise_amp = 0.05             # optional small jitter
+
+is_attStr = False
+attention_strides = [1] * 3 + [2] * 3  + [4] * 4 + [16] * 2  # total n_head elements
+
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read()) # overrides from command line or config file
 config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
+
+print("--- is_forgetting:", is_forgetting)
+if is_forgetting:
+    print(f"---   forget_interval: {forget_interval}")
+    print(f"---   forget_strength: {forget_strength}")
+
+print("--- is_bLR:", is_bLR)
+blr_rng = np.random.default_rng(seed)
+
+print("--- is_attStr:", is_attStr)
+if is_attStr:
+    print(f"---   attention_strides: {attention_strides}")
 
 # various inits, derived attributes, I/O setup
 ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
@@ -146,6 +178,8 @@ if os.path.exists(meta_path):
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
                   bias=bias, vocab_size=None, dropout=dropout) # start with model_args from command line
+if is_attStr:
+    model_args['attention_strides'] = attention_strides
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
@@ -186,6 +220,8 @@ elif init_from.startswith('gpt2'):
     # read off the created config params, so we can store them into checkpoint correctly
     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
         model_args[k] = getattr(model.config, k)
+if is_forgetting:
+    initial_state = {k: v.clone().detach() for k, v in model.state_dict().items()}
 # crop down the model block size if desired, using model surgery
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
@@ -193,7 +229,7 @@ if block_size < model.config.block_size:
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+scaler = torch.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
@@ -255,7 +291,13 @@ running_mfu = -1.0
 while True:
 
     # determine and set the learning rate for this iteration
-    lr = get_lr(iter_num) if decay_lr else learning_rate
+    if is_bLR:
+        lr = blr.get_blr(iter_num, config, blr_rng)
+    elif decay_lr:
+        lr = get_lr(iter_num)
+    else:
+        lr = learning_rate
+
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -331,6 +373,19 @@ while True:
     # termination conditions
     if iter_num > max_iters:
         break
+
+    if is_forgetting and iter_num > 0 and iter_num % forget_interval == 0 and iter_num != max_iters:
+        print(f"Forgetting at step {iter_num}")
+        device = next(model.parameters()).device
+        for k in initial_state:
+            initial_state[k] = initial_state[k].to(device)
+
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                name = name.replace('_orig_mod.', '')
+                if name in initial_state:
+                    param.data.mul_(1 - (forget_strength)).add_(forget_strength * initial_state[name])
+        forget_strength /= 2
 
 if ddp:
     destroy_process_group()
