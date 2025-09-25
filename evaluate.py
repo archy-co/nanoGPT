@@ -3,12 +3,9 @@ import pickle
 import numpy as np
 import torch
 from contextlib import nullcontext
-
 from model import GPTConfig, GPT
 
-out_dirs = ["enwik8_2_babyPro", "enwik8_3_babyPro_ext0_forgetting0", "enwik8_4_babyPro_ext1_bLR0", "enwik8_5_babyPro_ext2_AttStr0", "enwik8_6_babyPro_ext1x2_forgetting_and_bLR0"]   # "enwik8_3_babyPro_ext0_forgetting0" "enwik8_2_babyPro" "enwik8_4_babyPro_ext1_bLR0" "enwik8_5_babyPro_ext2_AttStr0" "enwik8_6_babyPro_ext1x2_forgetting_and_bLR0"
-# out_dir = 'enwik8_2_babyPro'
-
+out_dirs = ["enwik8_2_babyPro", "enwik8_3_babyPro_ext0_forgetting0", "enwik8_4_babyPro_ext1_bLR0", "enwik8_5_babyPro_ext2_AttStr0", "enwik8_6_babyPro_ext1x2_forgetting_and_bLR0"]
 dataset = 'enwik8'
 split = 'test'
 eval_iters = 200
@@ -18,6 +15,8 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device == 'cpu' else torch.amp.autocast(device_type='cuda', dtype=ptdtype)
+
+N = 10   # number of trials
 
 data_dir = os.path.join('data', dataset)
 data_path = os.path.join(data_dir, f'{split}.bin')
@@ -57,6 +56,14 @@ for out_dir in out_dirs:
                 logits, loss = model(X, Y)
             losses[k] = loss.item()
         return losses.mean()
-
-    loss = estimate_loss().item()
-    print(f"Test loss (bpc): {loss:.4f}\n")
+    
+    trial_losses = []
+    for trial in range(N):
+        loss = estimate_loss().item()
+        trial_losses.append(loss)
+        print(f"Trial {trial+1}: {loss:.4f}")
+    
+    avg_loss = np.mean(trial_losses)
+    std_loss = np.std(trial_losses)
+    
+    print(f"Average test loss (bpc) from {N} trials: {avg_loss:.4f} ± {std_loss:.4f}\n")
