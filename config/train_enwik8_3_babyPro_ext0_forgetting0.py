@@ -1,4 +1,4 @@
-out_dir = 'enwik8_2_babyPro'
+out_dir = 'enwik8_3_babyPro_ext0_forgetting0'
 eval_interval = 500
 eval_iters = 200
 log_interval = 50
@@ -7,7 +7,7 @@ always_save_checkpoint = False
 
 wandb_log = True
 wandb_project = 'enwik8'
-wandb_run_name = 'enwik8_2_babyPro'
+wandb_run_name = 'enwik8_3_babyPro_ext0_forgetting0'
 
 dataset = 'enwik8'
 gradient_accumulation_steps = 2
@@ -34,4 +34,9 @@ beta2 = 0.99            # make a bit bigger because number of tokens per iter is
 
 warmup_iters = 100      # not super necessary potentially
 
-init_from = 'resume'
+init_from = 'scratch'
+
+
+forgetting = True
+forget_interval = 2000
+forget_strength = 0.64

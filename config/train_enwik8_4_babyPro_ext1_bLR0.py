@@ -1,24 +1,18 @@
-out_dir = 'enwik8_2_babyPro'
+out_dir = 'enwik8_4_babyPro_ext1_bLR0'
 eval_interval = 500
 eval_iters = 200
-log_interval = 50
+log_interval = 100
 
 always_save_checkpoint = False
 
 wandb_log = True
 wandb_project = 'enwik8'
-wandb_run_name = 'enwik8_2_babyPro'
+wandb_run_name = 'enwik8_4_babyPro_ext1_bLR0'
 
 dataset = 'enwik8'
 gradient_accumulation_steps = 2
 batch_size = 32
 block_size = 512
-
-# gpt2 model 124M params
-# n_layer = 12
-# n_head = 12
-# n_embd = 768
-# dropout = 0.1
 
 # half baby half gpt2 124M
 n_layer = 8
@@ -34,4 +28,21 @@ beta2 = 0.99            # make a bit bigger because number of tokens per iter is
 
 warmup_iters = 100      # not super necessary potentially
 
-init_from = 'resume'
+init_from = 'scratch'
+
+
+forgetting = False
+forget_interval = 2000
+forget_strength = 0.64
+
+
+is_bLR = True
+circadian_amp = 0.3          # amplitude of fast fluctuations
+circadian_period = 1000      # in iterations
+
+long_cycle_amp = 0.2         # amplitude of slower cycles
+long_cycle_period = 5000     # in iterations
+
+noise_amp = 0.05             # optional small jitter
+
+max_lr = 1.5e-3
